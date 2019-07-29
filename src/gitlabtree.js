@@ -4,6 +4,15 @@
  * @Last Modified by:  FrankFan
  */
 
+function getAllContent(selector) {
+  var wholeText = '';
+  let contents = $(selector).contents();
+  for (var i = 0; i < contents.length; i++) {
+    wholeText += contents[i].wholeText + ';';
+  }
+  return wholeText;
+}
+
 var GitlabTree = (function($, win) {
   var private_token,
     project_id,
@@ -17,41 +26,9 @@ var GitlabTree = (function($, win) {
     $jstree;
 
   var getPrivateToken = function(dtd) {
-    var arrXmlNode;
     var objXml = {};
-    var wholeText;
-
-    if ($('head script[type="text/javascript"]').contents()[0]) {
-      wholeText = $('head script[type="text/javascript"]').contents()[0]['wholeText'];
-    }
-
-    if (wholeText) {
-      if (!/window.gon/ig.test(wholeText)) {
-        return;
-      }
-    } else {
-      if ($('head script').contents()[0]) {
-        wholeText = $('head script').contents()[0]['wholeText'];
-      }
-
-      if (!wholeText) {
-        return;
-      } else {
-        if (!/window.gon/ig.test(wholeText)) {
-          // return;
-        }
-      }
-    }
-
-    if ($('head script[type="text/javascript"]').contents()[0]) {
-      arrXmlNode = wholeText.toString().split(';')
-    } else {
-      if ($('head script').contents()[0]) {
-        arrXmlNode = wholeText.toString().split(';')
-      } else {
-        return false;
-      }
-    }
+    var wholeText = getAllContent('head script');
+    var arrXmlNode = wholeText.toString().split(';')
 
     for (var i = 1; i < arrXmlNode.length - 1; i++) {
       var item = arrXmlNode[i].split('=');
@@ -67,7 +44,11 @@ var GitlabTree = (function($, win) {
 
     if (private_token) {
       private_token = private_token.replace(/\"/g, '');
+      dtd.resolve(true);
     } else {
+      //dtd.reject(false);
+      return;
+      // TODO
       if (isFilesTab()) {
         tryToGetTokenInGitlab9(function(result) {
           if (result && result != 401) {
@@ -103,7 +84,7 @@ var GitlabTree = (function($, win) {
 
   var initVariables = function() {
     project_id = $('#project_id').val() || $('#search_project_id').val();
-    repository_ref = $('#repository_ref').val();
+    repository_ref = $('#repository_ref').val() || 'master';
     originUrl = window.location.origin;
 
     var apiRootUrl = originUrl + '/api/v3/projects/';
@@ -113,6 +94,8 @@ var GitlabTree = (function($, win) {
 
     var tmpClassName = $('.container').length > 0 ? '.container' : '.content-wrapper .container-fluid';
     initContainerML = $(tmpClassName).offset() && $(tmpClassName).offset().left;
+
+    return project_id != null;
   }
 
   var generateTreeNodes = function(serverResult) {
@@ -173,8 +156,8 @@ var GitlabTree = (function($, win) {
     if (cnode.data === 'tree') {
       nodesDisplay.forEach(function(item) {
         var newNodeObj = $jstree.jstree(true).create_node(cnode, item, 'last', function(data) {
-          // console.log('new node created.');
-          // console.log(data);
+           console.log('new node created.');
+           console.log(data);
         });
         $jstree.jstree(true).open_node(cnode);
       });
@@ -199,7 +182,7 @@ var GitlabTree = (function($, win) {
   }
 
   var handleRefresh = function() {
-    var lastElement = getLocalStorageData().lastElement || '';
+    var lastElement = $('#path').val() || getLocalStorageData().lastElement || '';
     var requestPath = lastElement ? makeRequestArr(lastElement) : [];
     var promises = requestPath.map(function(path) {
       return getResultJson(path);
@@ -211,7 +194,7 @@ var GitlabTree = (function($, win) {
             var nodesDisplay = generateTreeNodes(item);
             var cssSelector = (index === 0) ? '.jstree .jstree-container-ul li a' : '.jstree .jstree-container-ul li.jstree-open ul li';
             expandSubTreeByJSON(cssSelector, requestPath, lastElement, nodesDisplay);
-            showGitlabTree();
+            isOnFilesTab() && showGitlabTree();
           });
         } else {
           $('.jstree .jstree-container-ul li a').each(function(index, item) {
@@ -220,7 +203,7 @@ var GitlabTree = (function($, win) {
               $(this).parent().find('div.jstree-wholerow').addClass('jstree-wholerow-clicked');
             }
           });
-          showGitlabTree();
+          isOnFilesTab() && showGitlabTree();
         }
       })
       .catch(function(err) {
@@ -282,6 +265,10 @@ var GitlabTree = (function($, win) {
   }
 
   var isFilesTab = function() {
+    return true;
+  }
+
+  var isOnFilesTab = function() {
     // gitlab 8.x
     var currentTabText = $('.project-navigation li.active a').text();
     if (currentTabText === 'Files' || $('.nav.nav-sidebar li.active a').text().trim() === 'Files') {
@@ -591,6 +578,10 @@ var GitlabTree = (function($, win) {
   var checkRepos = function(repos) {
     var result = true;
 
+    if (project_id == null) {
+      return false;
+    }
+
     if (repos && repos.length > 0) {
       for (var key in repos) {
         var objRepoInfo = repos[key];
@@ -656,11 +647,26 @@ var GitlabTree = (function($, win) {
     $('.open-tree').hide();
   }
 
+  var reload = function(e) {
+    if (e.target.nodeName === 'BODY') {
+      console.log('reload');
+      $(document).off('DOMNodeRemoved', reload);
+      setTimeout(function() {
+        init(getApiProjects);
+      });
+    }
+  };
+
   var init = function(next) {
     var p = new Promise(function(resolve, reject) {
       $.Deferred(getPrivateToken)
       .done(function(status) {
         resolve(status);
+
+        if (!initVariables()) {
+          return;
+        }
+
         if (isFilesTab()) {
           $(window).resize(function() {
             updateLayoutUI('show');
@@ -668,7 +674,7 @@ var GitlabTree = (function($, win) {
         }
         createBtn();
         showSpinner();
-        initVariables();
+        $(document).on('DOMNodeRemoved', reload);
       })
       .fail(function(status) {
         console.warn("Error: ", status);
